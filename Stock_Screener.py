@@ -5,7 +5,6 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
-import talib
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
@@ -69,12 +68,74 @@ st.markdown("""
         font-weight: bold;
         font-size: 1.2rem;
     }
-    
-    .sidebar .sidebar-content {
-        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-    }
 </style>
 """, unsafe_allow_html=True)
+
+class TechnicalIndicators:
+    """Custom technical indicators without TA-Lib dependency"""
+    
+    @staticmethod
+    def sma(data, window):
+        """Simple Moving Average"""
+        return data.rolling(window=window).mean()
+    
+    @staticmethod
+    def ema(data, window):
+        """Exponential Moving Average"""
+        return data.ewm(span=window).mean()
+    
+    @staticmethod
+    def rsi(data, window=14):
+        """Relative Strength Index"""
+        delta = data.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    
+    @staticmethod
+    def macd(data, fast=12, slow=26, signal=9):
+        """MACD Indicator"""
+        ema_fast = TechnicalIndicators.ema(data, fast)
+        ema_slow = TechnicalIndicators.ema(data, slow)
+        macd_line = ema_fast - ema_slow
+        signal_line = TechnicalIndicators.ema(macd_line, signal)
+        histogram = macd_line - signal_line
+        return macd_line, signal_line, histogram
+    
+    @staticmethod
+    def bollinger_bands(data, window=20, std_dev=2):
+        """Bollinger Bands"""
+        sma = TechnicalIndicators.sma(data, window)
+        std = data.rolling(window=window).std()
+        upper_band = sma + (std * std_dev)
+        lower_band = sma - (std * std_dev)
+        return upper_band, sma, lower_band
+    
+    @staticmethod
+    def stochastic(high, low, close, k_window=14, d_window=3):
+        """Stochastic Oscillator"""
+        lowest_low = low.rolling(window=k_window).min()
+        highest_high = high.rolling(window=k_window).max()
+        k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
+        d_percent = k_percent.rolling(window=d_window).mean()
+        return k_percent, d_percent
+    
+    @staticmethod
+    def atr(high, low, close, window=14):
+        """Average True Range"""
+        tr1 = high - low
+        tr2 = abs(high - close.shift())
+        tr3 = abs(low - close.shift())
+        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return true_range.rolling(window=window).mean()
+    
+    @staticmethod
+    def williams_r(high, low, close, window=14):
+        """Williams %R"""
+        highest_high = high.rolling(window=window).max()
+        lowest_low = low.rolling(window=window).min()
+        return -100 * ((highest_high - close) / (highest_high - lowest_low))
 
 class StockAnalyzer:
     def __init__(self, symbol, period="1y"):
@@ -85,7 +146,7 @@ class StockAnalyzer:
         self.info = None
         
     def fetch_data(self):
-        """Fetch stock data and company information"""[1]
+        """Fetch stock data and company information"""
         try:
             self.data = self.stock.history(period=self.period)
             self.info = self.stock.info
@@ -95,50 +156,59 @@ class StockAnalyzer:
             return False
     
     def calculate_technical_indicators(self):
-        """Calculate various technical indicators"""[7]
+        """Calculate various technical indicators using custom functions"""
         if self.data is None or len(self.data) < 50:
             return None
             
-        # Price data
-        high = self.data['High'].values
-        low = self.data['Low'].values
-        close = self.data['Close'].values
-        volume = self.data['Volume'].values
-        
         indicators = {}
         
+        # Price data
+        high = self.data['High']
+        low = self.data['Low']
+        close = self.data['Close']
+        volume = self.data['Volume']
+        
         # Moving Averages
-        indicators['SMA_20'] = talib.SMA(close, timeperiod=20)
-        indicators['SMA_50'] = talib.SMA(close, timeperiod=50)
-        indicators['SMA_200'] = talib.SMA(close, timeperiod=200)
-        indicators['EMA_12'] = talib.EMA(close, timeperiod=12)
-        indicators['EMA_26'] = talib.EMA(close, timeperiod=26)
+        indicators['SMA_20'] = TechnicalIndicators.sma(close, 20)
+        indicators['SMA_50'] = TechnicalIndicators.sma(close, 50)
+        indicators['SMA_200'] = TechnicalIndicators.sma(close, 200)
+        indicators['EMA_12'] = TechnicalIndicators.ema(close, 12)
+        indicators['EMA_26'] = TechnicalIndicators.ema(close, 26)
         
         # MACD
-        indicators['MACD'], indicators['MACD_signal'], indicators['MACD_hist'] = talib.MACD(close)
+        indicators['MACD'], indicators['MACD_signal'], indicators['MACD_hist'] = TechnicalIndicators.macd(close)
         
         # RSI
-        indicators['RSI'] = talib.RSI(close, timeperiod=14)
+        indicators['RSI'] = TechnicalIndicators.rsi(close)
         
         # Bollinger Bands
-        indicators['BB_upper'], indicators['BB_middle'], indicators['BB_lower'] = talib.BBANDS(close)
+        indicators['BB_upper'], indicators['BB_middle'], indicators['BB_lower'] = TechnicalIndicators.bollinger_bands(close)
         
         # Stochastic
-        indicators['STOCH_K'], indicators['STOCH_D'] = talib.STOCH(high, low, close)
-        
-        # Volume indicators
-        indicators['OBV'] = talib.OBV(close, volume)
+        indicators['STOCH_K'], indicators['STOCH_D'] = TechnicalIndicators.stochastic(high, low, close)
         
         # ATR
-        indicators['ATR'] = talib.ATR(high, low, close, timeperiod=14)
+        indicators['ATR'] = TechnicalIndicators.atr(high, low, close)
         
         # Williams %R
-        indicators['WILLR'] = talib.WILLR(high, low, close, timeperiod=14)
+        indicators['WILLR'] = TechnicalIndicators.williams_r(high, low, close)
+        
+        # On Balance Volume (simple calculation)
+        obv = []
+        obv.append(volume.iloc[0])
+        for i in range(1, len(close)):
+            if close.iloc[i] > close.iloc[i-1]:
+                obv.append(obv[-1] + volume.iloc[i])
+            elif close.iloc[i] < close.iloc[i-1]:
+                obv.append(obv[-1] - volume.iloc[i])
+            else:
+                obv.append(obv[-1])
+        indicators['OBV'] = pd.Series(obv, index=close.index)
         
         return indicators
     
     def get_fundamental_data(self):
-        """Extract fundamental analysis data"""[10][11]
+        """Extract fundamental analysis data"""
         if self.info is None:
             return None
             
@@ -164,14 +234,14 @@ class StockAnalyzer:
         return fundamentals
     
     def generate_technical_signals(self, indicators):
-        """Generate buy/sell signals based on technical indicators"""[2][7]
+        """Generate buy/sell signals based on technical indicators"""
         signals = {}
         current_price = self.data['Close'].iloc[-1]
         
         # Moving Average Signals
-        sma_20 = indicators['SMA_20'][-1] if not np.isnan(indicators['SMA_20'][-1]) else 0
-        sma_50 = indicators['SMA_50'][-1] if not np.isnan(indicators['SMA_50'][-1]) else 0
-        sma_200 = indicators['SMA_200'][-1] if not np.isnan(indicators['SMA_200'][-1]) else 0
+        sma_20 = indicators['SMA_20'].iloc[-1] if not pd.isna(indicators['SMA_20'].iloc[-1]) else 0
+        sma_50 = indicators['SMA_50'].iloc[-1] if not pd.isna(indicators['SMA_50'].iloc[-1]) else 0
+        sma_200 = indicators['SMA_200'].iloc[-1] if not pd.isna(indicators['SMA_200'].iloc[-1]) else 0
         
         signals['MA_signal'] = 0
         if current_price > sma_20 > sma_50 > sma_200:
@@ -184,8 +254,8 @@ class StockAnalyzer:
             signals['MA_signal'] = -1  # Sell
         
         # MACD Signal
-        macd = indicators['MACD'][-1] if not np.isnan(indicators['MACD'][-1]) else 0
-        macd_signal = indicators['MACD_signal'][-1] if not np.isnan(indicators['MACD_signal'][-1]) else 0
+        macd = indicators['MACD'].iloc[-1] if not pd.isna(indicators['MACD'].iloc[-1]) else 0
+        macd_signal = indicators['MACD_signal'].iloc[-1] if not pd.isna(indicators['MACD_signal'].iloc[-1]) else 0
         
         if macd > macd_signal and macd > 0:
             signals['MACD_signal'] = 1
@@ -195,7 +265,7 @@ class StockAnalyzer:
             signals['MACD_signal'] = 0
         
         # RSI Signal
-        rsi = indicators['RSI'][-1] if not np.isnan(indicators['RSI'][-1]) else 50
+        rsi = indicators['RSI'].iloc[-1] if not pd.isna(indicators['RSI'].iloc[-1]) else 50
         if rsi < 30:
             signals['RSI_signal'] = 1  # Oversold - Buy
         elif rsi > 70:
@@ -204,8 +274,8 @@ class StockAnalyzer:
             signals['RSI_signal'] = 0
         
         # Bollinger Bands Signal
-        bb_upper = indicators['BB_upper'][-1] if not np.isnan(indicators['BB_upper'][-1]) else current_price
-        bb_lower = indicators['BB_lower'][-1] if not np.isnan(indicators['BB_lower'][-1]) else current_price
+        bb_upper = indicators['BB_upper'].iloc[-1] if not pd.isna(indicators['BB_upper'].iloc[-1]) else current_price
+        bb_lower = indicators['BB_lower'].iloc[-1] if not pd.isna(indicators['BB_lower'].iloc[-1]) else current_price
         
         if current_price <= bb_lower:
             signals['BB_signal'] = 1  # Buy
@@ -215,7 +285,7 @@ class StockAnalyzer:
             signals['BB_signal'] = 0
         
         # Stochastic Signal
-        stoch_k = indicators['STOCH_K'][-1] if not np.isnan(indicators['STOCH_K'][-1]) else 50
+        stoch_k = indicators['STOCH_K'].iloc[-1] if not pd.isna(indicators['STOCH_K'].iloc[-1]) else 50
         if stoch_k < 20:
             signals['STOCH_signal'] = 1
         elif stoch_k > 80:
@@ -226,7 +296,7 @@ class StockAnalyzer:
         return signals
     
     def generate_fundamental_signals(self, fundamentals):
-        """Generate buy/sell signals based on fundamental analysis"""[10][11]
+        """Generate buy/sell signals based on fundamental analysis"""
         if fundamentals is None:
             return {}
             
@@ -293,7 +363,7 @@ class StockAnalyzer:
         return signals
     
     def calculate_position_size(self, portfolio_value, risk_percentage, atr_value, current_price):
-        """Calculate position size based on risk management"""[1]
+        """Calculate position size based on risk management"""
         risk_amount = portfolio_value * (risk_percentage / 100)
         
         # Use ATR for stop loss calculation
@@ -312,13 +382,13 @@ class StockAnalyzer:
         return 0
 
 def create_price_chart(data, indicators):
-    """Create comprehensive price chart with technical indicators"""[4]
+    """Create comprehensive price chart with technical indicators"""
     fig = make_subplots(
         rows=4, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.05,
         subplot_titles=('Price & Moving Averages', 'MACD', 'RSI', 'Volume'),
-        row_width=[0.4, 0.2, 0.2, 0.2]
+        row_heights=[0.4, 0.2, 0.2, 0.2]
     )
     
     # Candlestick chart
@@ -440,7 +510,7 @@ def main():
                     
                     # Current price and ATR
                     current_price = analyzer.data['Close'].iloc[-1]
-                    atr_value = indicators['ATR'][-1] if not np.isnan(indicators['ATR'][-1]) else current_price * 0.02
+                    atr_value = indicators['ATR'].iloc[-1] if not pd.isna(indicators['ATR'].iloc[-1]) else current_price * 0.02
                     
                     # Calculate position size
                     position_size = analyzer.calculate_position_size(
@@ -562,11 +632,11 @@ def main():
                                 '🟢 Buy' if tech_signals.get('STOCH_signal', 0) > 0 else '🔴 Sell' if tech_signals.get('STOCH_signal', 0) < 0 else '🟡 Neutral'
                             ],
                             'Value': [
-                                f"SMA20: ${indicators['SMA_20'][-1]:.2f}" if not np.isnan(indicators['SMA_20'][-1]) else "N/A",
-                                f"MACD: {indicators['MACD'][-1]:.3f}" if not np.isnan(indicators['MACD'][-1]) else "N/A",
-                                f"RSI: {indicators['RSI'][-1]:.1f}" if not np.isnan(indicators['RSI'][-1]) else "N/A",
-                                f"Price vs BB: {'Upper' if current_price >= indicators['BB_upper'][-1] else 'Lower' if current_price <= indicators['BB_lower'][-1] else 'Middle'}",
-                                f"Stoch %K: {indicators['STOCH_K'][-1]:.1f}" if not np.isnan(indicators['STOCH_K'][-1]) else "N/A"
+                                f"SMA20: ${indicators['SMA_20'].iloc[-1]:.2f}" if not pd.isna(indicators['SMA_20'].iloc[-1]) else "N/A",
+                                f"MACD: {indicators['MACD'].iloc[-1]:.3f}" if not pd.isna(indicators['MACD'].iloc[-1]) else "N/A",
+                                f"RSI: {indicators['RSI'].iloc[-1]:.1f}" if not pd.isna(indicators['RSI'].iloc[-1]) else "N/A",
+                                f"Price vs BB: {'Upper' if current_price >= indicators['BB_upper'].iloc[-1] else 'Lower' if current_price <= indicators['BB_lower'].iloc[-1] else 'Middle'}",
+                                f"Stoch %K: {indicators['STOCH_K'].iloc[-1]:.1f}" if not pd.isna(indicators['STOCH_K'].iloc[-1]) else "N/A"
                             ]
                         })
                         
