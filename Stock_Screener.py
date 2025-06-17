@@ -7,7 +7,15 @@ from plotly.subplots import make_subplots
 import requests
 from datetime import datetime, timedelta
 import warnings
+from scipy.stats import norm
+import math
 warnings.filterwarnings('ignore')
+
+# Install required packages if not available
+try:
+    from textblob import TextBlob
+except ImportError:
+    st.error("Please install textblob: pip install textblob")
 
 # Page configuration
 st.set_page_config(
@@ -97,46 +105,37 @@ class TechnicalIndicators:
     
     @staticmethod
     def detect_support_resistance(data, n1=2, n2=2, backcandles=40):
-        """
-        Detect support and resistance levels using local minima/maxima
-        """
+        """Detect support and resistance levels using local minima/maxima"""
         def is_support(df, i, n1, n2):
-            """Check if candle at index i is a support level"""
             if i < n1 or i >= len(df) - n2:
                 return False
             
             current_low = df['Low'].iloc[i]
             
-            # Check if current low is lower than surrounding lows
             for j in range(i - n1, i + n2 + 1):
                 if j != i and df['Low'].iloc[j] < current_low:
                     return False
             
-            # Check for significant lower wick
             candle_body = abs(df['Close'].iloc[i] - df['Open'].iloc[i])
             lower_wick = min(df['Open'].iloc[i], df['Close'].iloc[i]) - df['Low'].iloc[i]
             
             return lower_wick > candle_body * 0.1
         
         def is_resistance(df, i, n1, n2):
-            """Check if candle at index i is a resistance level"""
             if i < n1 or i >= len(df) - n2:
                 return False
             
             current_high = df['High'].iloc[i]
             
-            # Check if current high is higher than surrounding highs
             for j in range(i - n1, i + n2 + 1):
                 if j != i and df['High'].iloc[j] > current_high:
                     return False
             
-            # Check for significant upper wick
             candle_body = abs(df['Close'].iloc[i] - df['Open'].iloc[i])
             upper_wick = df['High'].iloc[i] - max(df['Open'].iloc[i], df['Close'].iloc[i])
             
             return upper_wick > candle_body * 0.1
         
-        # Find support and resistance levels
         support_levels = []
         resistance_levels = []
         
@@ -149,7 +148,6 @@ class TechnicalIndicators:
             if is_resistance(data, i, n1, n2):
                 resistance_levels.append(data['High'].iloc[i])
         
-        # Remove duplicate levels that are too close
         def merge_close_levels(levels, threshold=0.001):
             if not levels:
                 return []
@@ -174,15 +172,12 @@ class TechnicalIndicators:
         if len(data) < 1:
             return None
         
-        # Use the last complete day's data
         high = data['High'].iloc[-1]
         low = data['Low'].iloc[-1]
         close = data['Close'].iloc[-1]
         
-        # Calculate pivot point
         pivot_point = (high + low + close) / 3
         
-        # Calculate support and resistance levels
         support_1 = (pivot_point * 2) - high
         support_2 = pivot_point - (high - low)
         resistance_1 = (pivot_point * 2) - low
@@ -206,32 +201,25 @@ class TechnicalIndicators:
     
     @staticmethod
     def detect_macd_divergence(data, macd_line, lookback_periods=20):
-        """
-        Detect MACD divergence patterns
-        """
+        """Detect MACD divergence patterns"""
         def find_peaks_and_troughs(series, window=5):
-            """Find local peaks and troughs in a series"""
             peaks = []
             troughs = []
             
             for i in range(window, len(series) - window):
-                # Check for peak
                 if all(series.iloc[i] >= series.iloc[i-j] for j in range(1, window+1)) and \
                    all(series.iloc[i] >= series.iloc[i+j] for j in range(1, window+1)):
                     peaks.append((i, series.iloc[i]))
                 
-                # Check for trough
                 if all(series.iloc[i] <= series.iloc[i-j] for j in range(1, window+1)) and \
                    all(series.iloc[i] <= series.iloc[i+j] for j in range(1, window+1)):
                     troughs.append((i, series.iloc[i]))
             
             return peaks, troughs
         
-        # Get recent data for analysis
         recent_data = data.tail(lookback_periods)
         recent_macd = macd_line.tail(lookback_periods)
         
-        # Find peaks and troughs in price and MACD
         price_peaks, price_troughs = find_peaks_and_troughs(recent_data['Close'])
         macd_peaks, macd_troughs = find_peaks_and_troughs(recent_macd)
         
@@ -243,40 +231,34 @@ class TechnicalIndicators:
             'divergence_strength': 0
         }
         
-        # Check for regular bullish divergence
         if len(price_troughs) >= 2 and len(macd_troughs) >= 2:
             latest_price_trough = price_troughs[-1]
             prev_price_trough = price_troughs[-2]
             latest_macd_trough = macd_troughs[-1]
             prev_macd_trough = macd_troughs[-2]
             
-            # Price making lower lows, MACD making higher lows
             if (latest_price_trough[1] < prev_price_trough[1] and 
                 latest_macd_trough[1] > prev_macd_trough[1]):
                 divergences['bullish_divergence'] = True
                 divergences['divergence_strength'] += 2
         
-        # Check for regular bearish divergence
         if len(price_peaks) >= 2 and len(macd_peaks) >= 2:
             latest_price_peak = price_peaks[-1]
             prev_price_peak = price_peaks[-2]
             latest_macd_peak = macd_peaks[-1]
             prev_macd_peak = macd_peaks[-2]
             
-            # Price making higher highs, MACD making lower highs
             if (latest_price_peak[1] > prev_price_peak[1] and 
                 latest_macd_peak[1] < prev_macd_peak[1]):
                 divergences['bearish_divergence'] = True
                 divergences['divergence_strength'] -= 2
         
-        # Check for hidden divergences (trend continuation signals)
         if len(price_troughs) >= 2 and len(macd_troughs) >= 2:
             latest_price_trough = price_troughs[-1]
             prev_price_trough = price_troughs[-2]
             latest_macd_trough = macd_troughs[-1]
             prev_macd_trough = macd_troughs[-2]
             
-            # Hidden bullish: Price higher lows, MACD lower lows (uptrend continuation)
             if (latest_price_trough[1] > prev_price_trough[1] and 
                 latest_macd_trough[1] < prev_macd_trough[1]):
                 divergences['hidden_bullish'] = True
@@ -288,7 +270,6 @@ class TechnicalIndicators:
             latest_macd_peak = macd_peaks[-1]
             prev_macd_peak = macd_peaks[-2]
             
-            # Hidden bearish: Price lower highs, MACD higher highs (downtrend continuation)
             if (latest_price_peak[1] < prev_price_peak[1] and 
                 latest_macd_peak[1] > prev_macd_peak[1]):
                 divergences['hidden_bearish'] = True
@@ -298,9 +279,7 @@ class TechnicalIndicators:
     
     @staticmethod
     def enhanced_macd_signals(data, macd_line, signal_line, histogram):
-        """
-        Enhanced MACD signal generation including divergence analysis
-        """
+        """Enhanced MACD signal generation including divergence analysis"""
         signals = {
             'crossover_signal': 0,
             'histogram_signal': 0,
@@ -315,48 +294,266 @@ class TechnicalIndicators:
         prev_signal = signal_line.iloc[-2]
         current_histogram = histogram.iloc[-1]
         
-        # 1. Crossover signals
         if current_macd > current_signal and prev_macd <= prev_signal:
-            signals['crossover_signal'] = 1  # Bullish crossover
+            signals['crossover_signal'] = 1
         elif current_macd < current_signal and prev_macd >= prev_signal:
-            signals['crossover_signal'] = -1  # Bearish crossover
+            signals['crossover_signal'] = -1
         
-        # 2. Histogram signals (momentum strength)
         if current_histogram > 0:
-            signals['histogram_signal'] = 1  # Above zero - bullish momentum
+            signals['histogram_signal'] = 1
         else:
-            signals['histogram_signal'] = -1  # Below zero - bearish momentum
+            signals['histogram_signal'] = -1
         
-        # 3. Zero line crossover
         if current_macd > 0:
-            signals['zero_line_signal'] = 1  # Above zero line - bullish
+            signals['zero_line_signal'] = 1
         else:
-            signals['zero_line_signal'] = -1  # Below zero line - bearish
+            signals['zero_line_signal'] = -1
         
-        # 4. Divergence analysis
         divergence_data = TechnicalIndicators.detect_macd_divergence(data, macd_line)
         
         if divergence_data['bullish_divergence']:
-            signals['divergence_signal'] = 2  # Strong bullish signal
+            signals['divergence_signal'] = 2
         elif divergence_data['bearish_divergence']:
-            signals['divergence_signal'] = -2  # Strong bearish signal
+            signals['divergence_signal'] = -2
         elif divergence_data['hidden_bullish']:
-            signals['divergence_signal'] = 1  # Moderate bullish (trend continuation)
+            signals['divergence_signal'] = 1
         elif divergence_data['hidden_bearish']:
-            signals['divergence_signal'] = -1  # Moderate bearish (trend continuation)
+            signals['divergence_signal'] = -1
         
-        # 5. Overall MACD signal (weighted combination)
         signals['overall_macd_signal'] = (
-            signals['crossover_signal'] * 2 +  # Crossovers get double weight
+            signals['crossover_signal'] * 2 +
             signals['histogram_signal'] * 1 +
             signals['zero_line_signal'] * 1 +
-            signals['divergence_signal'] * 2   # Divergences get double weight
+            signals['divergence_signal'] * 2
         )
         
-        # Store divergence details for display
         signals['divergence_details'] = divergence_data
         
         return signals
+
+class ProbabilityCalculator:
+    """Calculate probability of profit for trading positions"""
+    
+    @staticmethod
+    def calculate_multi_indicator_probability(signals, individual_probabilities=None):
+        """Calculate probability of profit using multiple indicator approach"""
+        if individual_probabilities is None:
+            individual_probabilities = {
+                'MA_signal': 0.35,
+                'MACD_signal': 0.35,
+                'RSI_signal': 0.35,
+                'BB_signal': 0.35,
+                'STOCH_signal': 0.35,
+                'SR_signal': 0.40,
+                'pivot_signal': 0.35,
+                'ADX_signal': 0.30
+            }
+        
+        active_signals = []
+        signal_probs = []
+        
+        for signal_name, signal_value in signals.items():
+            if signal_name in individual_probabilities and signal_value != 0:
+                active_signals.append(signal_name)
+                signal_probs.append(individual_probabilities[signal_name])
+        
+        if not signal_probs:
+            return 0.5
+        
+        prob_all_wrong = 1.0
+        for prob in signal_probs:
+            prob_all_wrong *= (1 - prob)
+        
+        prob_at_least_one_correct = 1 - prob_all_wrong
+        
+        return prob_at_least_one_correct
+    
+    @staticmethod
+    def calculate_stock_probability_of_profit(current_price, target_price, stop_loss, 
+                                            volatility, days_to_target=30):
+        """Calculate probability of profit for stock position using Black-Scholes approach"""
+        try:
+            time_to_target = days_to_target / 365.0
+            risk_free_rate = 0.05
+            
+            if volatility <= 0 or time_to_target <= 0:
+                return 0.5
+            
+            d1_target = (np.log(current_price / target_price) + 
+                        (risk_free_rate + 0.5 * volatility**2) * time_to_target) / \
+                       (volatility * np.sqrt(time_to_target))
+            
+            d2_target = d1_target - volatility * np.sqrt(time_to_target)
+            
+            prob_target = norm.cdf(d2_target)
+            
+            d1_stop = (np.log(current_price / stop_loss) + 
+                      (risk_free_rate + 0.5 * volatility**2) * time_to_target) / \
+                     (volatility * np.sqrt(time_to_target))
+            
+            d2_stop = d1_stop - volatility * np.sqrt(time_to_target)
+            
+            prob_stop = 1 - norm.cdf(d2_stop)
+            
+            prob_profit = prob_target * (1 - prob_stop)
+            
+            return max(0.1, min(0.9, prob_profit))
+            
+        except Exception as e:
+            return 0.5
+    
+    @staticmethod
+    def calculate_historical_volatility(price_data, window=30):
+        """Calculate historical volatility from price data"""
+        try:
+            returns = price_data.pct_change().dropna()
+            volatility = returns.rolling(window=window).std().iloc[-1] * np.sqrt(252)
+            return volatility if not np.isnan(volatility) else 0.2
+        except:
+            return 0.2
+
+def get_real_news_sentiment(symbol):
+    """Get real news sentiment with updated data structure handling"""
+    try:
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+        
+        if not news:
+            st.warning(f"No news data available for {symbol}")
+            return []
+        
+        news_items = []
+        for article in news[:15]:
+            try:
+                # Handle new data structure - extract from 'content' field
+                content = article.get('content', {})
+                
+                # Try multiple possible field names for title
+                title = (content.get('title') or 
+                        content.get('headline') or 
+                        content.get('summary') or
+                        article.get('title') or
+                        article.get('headline') or
+                        'No title available')
+                
+                # Skip if no meaningful title
+                if not title or title == 'No title available':
+                    continue
+                
+                # Extract other fields from content or main article
+                publisher = (content.get('provider', {}).get('displayName') or
+                           content.get('publisher') or
+                           content.get('source') or
+                           article.get('publisher') or
+                           'Unknown')
+                
+                # Extract timestamp
+                timestamp = (content.get('pubDate') or
+                           content.get('publishTime') or
+                           content.get('providerPublishTime') or
+                           article.get('providerPublishTime') or
+                           article.get('timestamp') or 0)
+                
+                # Extract URL
+                url = (content.get('clickThroughUrl') or
+                      content.get('url') or
+                      content.get('link') or
+                      article.get('link') or
+                      article.get('url') or '')
+                
+                # Sentiment analysis
+                try:
+                    from textblob import TextBlob
+                    blob = TextBlob(title)
+                    polarity = blob.sentiment.polarity
+                    subjectivity = blob.sentiment.subjectivity
+                    
+                    if polarity > 0.3:
+                        sentiment = "Very Positive"
+                    elif polarity > 0.1:
+                        sentiment = "Positive"
+                    elif polarity < -0.3:
+                        sentiment = "Very Negative"
+                    elif polarity < -0.1:
+                        sentiment = "Negative"
+                    else:
+                        sentiment = "Neutral"
+                        
+                except ImportError:
+                    st.error("TextBlob not installed. Run: pip install textblob")
+                    sentiment = "Unknown"
+                    polarity = 0
+                    subjectivity = 0
+                except Exception as e:
+                    sentiment = "Neutral"
+                    polarity = 0
+                    subjectivity = 0.5
+                
+                # Convert timestamp to readable date
+                try:
+                    if timestamp and isinstance(timestamp, (int, float)) and timestamp > 0:
+                        date = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')
+                    else:
+                        date = datetime.now().strftime('%Y-%m-%d %H:%M')
+                except:
+                    date = datetime.now().strftime('%Y-%m-%d %H:%M')
+                
+                news_items.append({
+                    "title": title,
+                    "sentiment": sentiment,
+                    "polarity_score": round(polarity, 3),
+                    "subjectivity_score": round(subjectivity, 3),
+                    "date": date,
+                    "publisher": publisher,
+                    "url": url
+                })
+                
+            except Exception as e:
+                # Skip problematic articles
+                continue
+        
+        # If no news items found, create a fallback based on recent performance
+        if not news_items:
+            try:
+                # Get recent price data for fallback news
+                hist_data = ticker.history(period="5d")
+                if len(hist_data) >= 2:
+                    current_price = hist_data['Close'].iloc[-1]
+                    prev_price = hist_data['Close'].iloc[-2]
+                    change_pct = ((current_price - prev_price) / prev_price) * 100
+                    
+                    if change_pct > 3:
+                        title = f"{symbol} shows strong performance with {change_pct:.1f}% gain"
+                        sentiment = "Positive"
+                        polarity = 0.4
+                    elif change_pct < -3:
+                        title = f"{symbol} experiences {abs(change_pct):.1f}% decline in recent trading"
+                        sentiment = "Negative"
+                        polarity = -0.4
+                    else:
+                        title = f"{symbol} trading with mixed signals, {change_pct:+.1f}% change"
+                        sentiment = "Neutral"
+                        polarity = 0.1 if change_pct > 0 else -0.1
+                    
+                    news_items.append({
+                        "title": title,
+                        "sentiment": sentiment,
+                        "polarity_score": polarity,
+                        "subjectivity_score": 0.6,
+                        "date": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                        "publisher": "Market Analysis",
+                        "url": ""
+                    })
+            except:
+                pass
+        
+        return news_items
+        
+    except Exception as e:
+        st.error(f"Error fetching news: {e}")
+        return []
+
+
 
 class StockAnalyzer:
     def __init__(self, symbol, period="1y"):
@@ -387,53 +584,43 @@ class StockAnalyzer:
             
         indicators = {}
         
-        # Price data
         high = self.data['High']
         low = self.data['Low']
         close = self.data['Close']
         volume = self.data['Volume']
         
-        # Moving Averages
         indicators['SMA_20'] = TechnicalIndicators.sma(close, 20)
         indicators['SMA_50'] = TechnicalIndicators.sma(close, 50)
         indicators['EMA_12'] = TechnicalIndicators.ema(close, 12)
         indicators['EMA_26'] = TechnicalIndicators.ema(close, 26)
         
-        # RSI
         indicators['RSI'] = TechnicalIndicators.rsi(close)
         
-        # MACD
         macd, signal, histogram = TechnicalIndicators.macd(close)
         indicators['MACD'] = macd
         indicators['MACD_signal'] = signal
         indicators['MACD_histogram'] = histogram
         
-        # Bollinger Bands
         bb_upper, bb_middle, bb_lower = TechnicalIndicators.bollinger_bands(close)
         indicators['BB_upper'] = bb_upper
         indicators['BB_middle'] = bb_middle
         indicators['BB_lower'] = bb_lower
         
-        # Stochastic
         stoch_k, stoch_d = TechnicalIndicators.stochastic(high, low, close)
         indicators['STOCH_K'] = stoch_k
         indicators['STOCH_D'] = stoch_d
         
-        # ATR
         indicators['ATR'] = TechnicalIndicators.atr(high, low, close)
         
-        # ADX
         adx, plus_di, minus_di = TechnicalIndicators.adx(high, low, close)
         indicators['ADX'] = adx
         indicators['PLUS_DI'] = plus_di
         indicators['MINUS_DI'] = minus_di
         
-        # Support and Resistance Detection
         support_levels, resistance_levels = TechnicalIndicators.detect_support_resistance(self.data)
         indicators['support_levels'] = support_levels
         indicators['resistance_levels'] = resistance_levels
         
-        # Pivot Points
         pivot_data = TechnicalIndicators.calculate_pivot_points(self.data)
         if pivot_data:
             indicators.update(pivot_data)
@@ -450,22 +637,22 @@ class StockAnalyzer:
         sma_50 = indicators['SMA_50'].iloc[-1]
         
         if current_price > sma_20 > sma_50:
-            signals['MA_signal'] = 1  # Buy
+            signals['MA_signal'] = 1
         elif current_price < sma_20 < sma_50:
-            signals['MA_signal'] = -1  # Sell
+            signals['MA_signal'] = -1
         else:
-            signals['MA_signal'] = 0  # Neutral
+            signals['MA_signal'] = 0
         
         # RSI signals
         rsi = indicators['RSI'].iloc[-1]
         if rsi < 30:
-            signals['RSI_signal'] = 1  # Oversold - Buy
+            signals['RSI_signal'] = 1
         elif rsi > 70:
-            signals['RSI_signal'] = -1  # Overbought - Sell
+            signals['RSI_signal'] = -1
         else:
-            signals['RSI_signal'] = 0  # Neutral
+            signals['RSI_signal'] = 0
         
-        # Enhanced MACD signals with divergence analysis
+        # Enhanced MACD signals
         macd_signals = TechnicalIndicators.enhanced_macd_signals(
             self.data, 
             indicators['MACD'], 
@@ -473,15 +660,13 @@ class StockAnalyzer:
             indicators['MACD_histogram']
         )
         
-        # Use the overall MACD signal instead of just crossover
         if macd_signals['overall_macd_signal'] >= 2:
-            signals['MACD_signal'] = 1  # Strong buy
+            signals['MACD_signal'] = 1
         elif macd_signals['overall_macd_signal'] <= -2:
-            signals['MACD_signal'] = -1  # Strong sell
+            signals['MACD_signal'] = -1
         else:
-            signals['MACD_signal'] = 0  # Neutral
+            signals['MACD_signal'] = 0
         
-        # Store detailed MACD analysis for display
         signals['macd_details'] = macd_signals
         
         # Bollinger Bands signals
@@ -489,28 +674,27 @@ class StockAnalyzer:
         bb_lower = indicators['BB_lower'].iloc[-1]
         
         if current_price <= bb_lower:
-            signals['BB_signal'] = 1  # Oversold - Buy
+            signals['BB_signal'] = 1
         elif current_price >= bb_upper:
-            signals['BB_signal'] = -1  # Overbought - Sell
+            signals['BB_signal'] = -1
         else:
-            signals['BB_signal'] = 0  # Neutral
+            signals['BB_signal'] = 0
         
         # Stochastic signals
         stoch_k = indicators['STOCH_K'].iloc[-1]
         stoch_d = indicators['STOCH_D'].iloc[-1]
         
         if stoch_k < 20 and stoch_d < 20:
-            signals['STOCH_signal'] = 1  # Oversold - Buy
+            signals['STOCH_signal'] = 1
         elif stoch_k > 80 and stoch_d > 80:
-            signals['STOCH_signal'] = -1  # Overbought - Sell
+            signals['STOCH_signal'] = -1
         else:
-            signals['STOCH_signal'] = 0  # Neutral
+            signals['STOCH_signal'] = 0
         
         # Support and Resistance Signals
         support_levels = indicators.get('support_levels', [])
         resistance_levels = indicators.get('resistance_levels', [])
         
-        # Check proximity to support/resistance
         near_support, support_distance = TechnicalIndicators.check_level_proximity(
             current_price, support_levels, threshold=0.02
         )
@@ -520,33 +704,33 @@ class StockAnalyzer:
         
         signals['SR_signal'] = 0
         if near_support:
-            signals['SR_signal'] = 1  # Buy signal near support
+            signals['SR_signal'] = 1
             signals['near_support'] = near_support
             signals['support_distance'] = support_distance
         elif near_resistance:
-            signals['SR_signal'] = -1  # Sell signal near resistance
+            signals['SR_signal'] = -1
             signals['near_resistance'] = near_resistance
             signals['resistance_distance'] = resistance_distance
         
         # Pivot point signals
         pivot_point = indicators.get('pivot_point', current_price)
         if current_price > pivot_point:
-            signals['pivot_signal'] = 1  # Above pivot - bullish
+            signals['pivot_signal'] = 1
         else:
-            signals['pivot_signal'] = -1  # Below pivot - bearish
+            signals['pivot_signal'] = -1
         
         # ADX trend strength signal
         adx_value = indicators['ADX'].iloc[-1]
         plus_di = indicators['PLUS_DI'].iloc[-1]
         minus_di = indicators['MINUS_DI'].iloc[-1]
         
-        if adx_value > 25:  # Strong trend
+        if adx_value > 25:
             if plus_di > minus_di:
-                signals['ADX_signal'] = 1  # Strong uptrend
+                signals['ADX_signal'] = 1
             else:
-                signals['ADX_signal'] = -1  # Strong downtrend
+                signals['ADX_signal'] = -1
         else:
-            signals['ADX_signal'] = 0  # No clear trend
+            signals['ADX_signal'] = 0
         
         return signals
 
@@ -623,11 +807,10 @@ def create_price_chart(data, indicators):
         row=1, col=1
     )
     
-    # Add Support and Resistance Levels
+    # Support and Resistance Levels
     support_levels = indicators.get('support_levels', [])
     resistance_levels = indicators.get('resistance_levels', [])
     
-    # Plot support levels
     for level in support_levels:
         fig.add_hline(
             y=level, 
@@ -639,7 +822,6 @@ def create_price_chart(data, indicators):
             row=1, col=1
         )
     
-    # Plot resistance levels
     for level in resistance_levels:
         fig.add_hline(
             y=level, 
@@ -651,7 +833,7 @@ def create_price_chart(data, indicators):
             row=1, col=1
         )
     
-    # Add pivot points if available
+    # Pivot points
     if 'pivot_point' in indicators:
         pivot_point = indicators['pivot_point']
         fig.add_hline(
@@ -664,7 +846,6 @@ def create_price_chart(data, indicators):
             row=1, col=1
         )
         
-        # Add pivot support and resistance levels
         for level_name, level_value in [
             ('S1', indicators.get('support_1')),
             ('S2', indicators.get('support_2')),
@@ -706,7 +887,6 @@ def create_price_chart(data, indicators):
         row=2, col=1
     )
     
-    # MACD Histogram
     colors = ['green' if val >= 0 else 'red' for val in indicators['MACD_histogram']]
     fig.add_trace(
         go.Bar(
@@ -719,7 +899,6 @@ def create_price_chart(data, indicators):
         row=2, col=1
     )
     
-    # Add zero line for MACD
     fig.add_hline(y=0, line_dash="dash", line_color="gray", row=2, col=1)
     
     # RSI
@@ -734,7 +913,6 @@ def create_price_chart(data, indicators):
         row=3, col=1
     )
     
-    # RSI levels
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
     fig.add_hline(y=50, line_dash="dot", line_color="gray", row=3, col=1)
@@ -773,7 +951,6 @@ def create_price_chart(data, indicators):
         row=4, col=1
     )
     
-    # ADX trend strength levels
     fig.add_hline(y=25, line_dash="dash", line_color="orange", row=4, col=1)
     fig.add_hline(y=50, line_dash="dash", line_color="red", row=4, col=1)
     
@@ -789,7 +966,6 @@ def create_price_chart(data, indicators):
         row=5, col=1
     )
     
-    # Update layout
     fig.update_layout(
         title="Advanced Technical Analysis Dashboard",
         xaxis_rangeslider_visible=False,
@@ -798,7 +974,6 @@ def create_price_chart(data, indicators):
         template="plotly_dark"
     )
     
-    # Update y-axes
     fig.update_yaxes(title_text="Price ($)", row=1, col=1)
     fig.update_yaxes(title_text="MACD", row=2, col=1)
     fig.update_yaxes(title_text="RSI", row=3, col=1)
@@ -810,10 +985,9 @@ def create_price_chart(data, indicators):
 def calculate_position_sizing(current_price, atr, portfolio_value=10000, risk_percent=0.01):
     """Calculate recommended position size based on risk management"""
     risk_amount = portfolio_value * risk_percent
-    stop_loss_distance = atr * 2  # 2x ATR for stop loss
+    stop_loss_distance = atr * 2
     stop_loss_price = current_price - stop_loss_distance
     
-    # Calculate shares based on risk amount
     if stop_loss_distance > 0:
         shares = int(risk_amount / stop_loss_distance)
         position_value = shares * current_price
@@ -829,27 +1003,6 @@ def calculate_position_sizing(current_price, atr, portfolio_value=10000, risk_pe
         'stop_loss_distance': stop_loss_distance
     }
 
-def get_news_sentiment(symbol):
-    """Get news sentiment for the stock (placeholder function)"""
-    news_items = [
-        {
-            "title": f"Market Analysis: {symbol} shows strong fundamentals",
-            "sentiment": "Positive",
-            "date": "2024-01-15"
-        },
-        {
-            "title": f"{symbol} quarterly earnings beat expectations",
-            "sentiment": "Positive", 
-            "date": "2024-01-14"
-        },
-        {
-            "title": f"Analysts upgrade {symbol} price target",
-            "sentiment": "Positive",
-            "date": "2024-01-13"
-        }
-    ]
-    return news_items
-
 def main():
     st.title("📈 Advanced Stock Analysis Dashboard")
     st.markdown("---")
@@ -857,10 +1010,8 @@ def main():
     # Sidebar
     st.sidebar.title("📊 Analysis Settings")
     
-    # Stock symbol input
     symbol = st.sidebar.text_input("Enter Stock Symbol", value="AAPL", help="Enter a valid stock ticker symbol")
     
-    # Time period selection
     period_options = {
         "1 Month": "1mo",
         "3 Months": "3mo", 
@@ -873,25 +1024,27 @@ def main():
     selected_period = st.sidebar.selectbox("Select Time Period", list(period_options.keys()), index=3)
     period = period_options[selected_period]
     
-    # Portfolio settings for position sizing
+    # Portfolio settings
     st.sidebar.subheader("💰 Portfolio Settings")
     portfolio_value = st.sidebar.number_input("Portfolio Value ($)", value=10000, min_value=1000, step=1000)
     risk_percent = st.sidebar.slider("Risk per Trade (%)", min_value=0.5, max_value=5.0, value=1.0, step=0.1) / 100
     
-    # Analysis type
+    # Probability settings
+    st.sidebar.subheader("🎯 Probability Settings")
+    days_to_target = st.sidebar.slider("Days to Target", min_value=5, max_value=90, value=30, step=5)
+    risk_reward_ratio = st.sidebar.slider("Risk:Reward Ratio", min_value=1.0, max_value=5.0, value=2.0, step=0.5)
+    
     analysis_type = st.sidebar.multiselect(
         "Select Analysis Type",
-        ["Technical Analysis", "Position Sizing", "Fundamental Analysis", "News Sentiment"],
-        default=["Technical Analysis", "Position Sizing"]
+        ["Technical Analysis", "Position Sizing", "Probability Analysis", "Fundamental Analysis", "News Sentiment"],
+        default=["Technical Analysis", "Position Sizing", "Probability Analysis"]
     )
     
     if st.sidebar.button("🔍 Analyze Stock", type="primary"):
         if symbol:
             with st.spinner(f"Analyzing {symbol}..."):
-                # Initialize analyzer
                 analyzer = StockAnalyzer(symbol, period)
                 
-                # Fetch data
                 if analyzer.fetch_data():
                     # Display basic info
                     col1, col2, col3, col4 = st.columns(4)
@@ -919,28 +1072,22 @@ def main():
                     if "Technical Analysis" in analysis_type:
                         st.markdown("## 🔧 Technical Analysis")
                         
-                        # Calculate indicators
                         indicators = analyzer.calculate_technical_indicators()
                         
                         if indicators:
-                            # Generate signals
                             tech_signals = analyzer.generate_technical_signals(indicators)
                             
-                            # Create chart
                             fig = create_price_chart(analyzer.data, indicators)
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            # Technical indicators table
                             col1, col2 = st.columns(2)
                             
                             with col1:
                                 st.subheader("📊 Technical Indicators")
                                 
-                                # Get MACD details for enhanced display
                                 macd_details = tech_signals.get('macd_details', {})
                                 divergence_info = macd_details.get('divergence_details', {})
                                 
-                                # Create more detailed MACD description
                                 macd_description = f"MACD: {indicators['MACD'].iloc[-1]:.3f}"
                                 if divergence_info.get('bullish_divergence'):
                                     macd_description += " (Bullish Divergence)"
@@ -951,7 +1098,6 @@ def main():
                                 elif divergence_info.get('hidden_bearish'):
                                     macd_description += " (Hidden Bearish)"
                                 
-                                # Create technical indicators dataframe
                                 tech_df = pd.DataFrame({
                                     'Indicator': ['Moving Averages', 'MACD', 'RSI', 'Bollinger Bands', 'Stochastic', 'Support/Resistance', 'Pivot Point', 'ADX'],
                                     'Signal': [
@@ -981,7 +1127,6 @@ def main():
                             with col2:
                                 st.subheader("🎯 Trading Signal")
                                 
-                                # Overall signal calculation
                                 tech_score = sum([
                                     tech_signals.get('MA_signal', 0),
                                     tech_signals.get('MACD_signal', 0),
@@ -1012,7 +1157,6 @@ def main():
                                 st.markdown(f"<h2 style='color: {signal_color}'>{signal_text}</h2>", unsafe_allow_html=True)
                                 st.markdown(f"**Signal Strength:** {tech_score}/8")
                                 
-                                # Signal reasoning
                                 st.subheader("📝 Signal Analysis")
                                 reasoning = []
                                 
@@ -1026,7 +1170,6 @@ def main():
                                 elif tech_signals.get('RSI_signal', 0) < 0:
                                     reasoning.append("❌ **RSI**: Overbought condition, potential correction")
                                 
-                                # Enhanced MACD reasoning
                                 macd_details = tech_signals.get('macd_details', {})
                                 divergence_info = macd_details.get('divergence_details', {})
                                 
@@ -1075,43 +1218,155 @@ def main():
                                 for reason in reasoning:
                                     st.markdown(reason)
                     
-                    # Position Sizing
-                    if "Position Sizing" in analysis_type and indicators:
-                        st.markdown("## 💰 Recommended Position")
+                    # Position Sizing and Probability Analysis
+                    if ("Position Sizing" in analysis_type or "Probability Analysis" in analysis_type) and indicators:
+                        st.markdown("## 💰 Recommended Position & Probability Analysis")
                         
                         atr_value = indicators['ATR'].iloc[-1]
                         position_data = calculate_position_sizing(current_price, atr_value, portfolio_value, risk_percent)
                         
-                        col1, col2, col3, col4 = st.columns(4)
+                        # Calculate target price based on risk-reward ratio
+                        target_price = current_price + (position_data['stop_loss_distance'] * risk_reward_ratio)
                         
-                        with col1:
-                            action = "BUY" if tech_score >= 2 else "SELL" if tech_score <= -2 else "HOLD"
-                            action_color = "green" if action == "BUY" else "red" if action == "SELL" else "orange"
-                            st.markdown(f"**Action:** <span style='color: {action_color}'>{action}</span>", unsafe_allow_html=True)
+                        # Calculate probabilities
+                        prob_calc = ProbabilityCalculator()
                         
-                        with col2:
-                            st.metric("Quantity", f"{position_data['shares']} shares")
+                        # Multi-indicator probability
+                        multi_indicator_prob = prob_calc.calculate_multi_indicator_probability(tech_signals)
                         
-                        with col3:
-                            st.metric("Position Value", f"${position_data['position_value']:.2f}")
+                        # Historical volatility
+                        historical_vol = prob_calc.calculate_historical_volatility(analyzer.data['Close'])
                         
-                        with col4:
-                            st.metric("Risk Amount", f"${position_data['risk_amount']:.2f} ({risk_percent*100:.1f}%)")
+                        # Stock probability of profit
+                        stock_prob = prob_calc.calculate_stock_probability_of_profit(
+                            current_price, target_price, position_data['stop_loss_price'], 
+                            historical_vol, days_to_target
+                        )
                         
-                        st.markdown("---")
+                        # Combined probability (weighted average)
+                        combined_prob = (multi_indicator_prob * 0.6 + stock_prob * 0.4)
                         
-                        col1, col2, col3 = st.columns(3)
+                        # Display position sizing
+                        if "Position Sizing" in analysis_type:
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                action = "BUY" if tech_score >= 2 else "SELL" if tech_score <= -2 else "HOLD"
+                                action_color = "green" if action == "BUY" else "red" if action == "SELL" else "orange"
+                                st.markdown(f"**Action:** <span style='color: {action_color}'>{action}</span>", unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.metric("Quantity", f"{position_data['shares']} shares")
+                            
+                            with col3:
+                                st.metric("Position Value", f"${position_data['position_value']:.2f}")
+                            
+                            with col4:
+                                st.metric("Risk Amount", f"${position_data['risk_amount']:.2f} ({risk_percent*100:.1f}%)")
+                            
+                            st.markdown("---")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Stop Loss", f"${position_data['stop_loss_price']:.2f}")
+                            
+                            with col2:
+                                st.metric("ATR (2x)", f"${position_data['stop_loss_distance']:.2f}")
+                            
+                            with col3:
+                                st.metric("Target Price", f"${target_price:.2f}")
                         
-                        with col1:
-                            st.metric("Stop Loss", f"${position_data['stop_loss_price']:.2f}")
-                        
-                        with col2:
-                            st.metric("ATR (2x)", f"${position_data['stop_loss_distance']:.2f}")
-                        
-                        with col3:
-                            risk_reward = 2.0  # Typical 1:2 risk-reward ratio
-                            target_price = current_price + (position_data['stop_loss_distance'] * risk_reward)
-                            st.metric("Target Price", f"${target_price:.2f}")
+                        # Display probability analysis
+                        if "Probability Analysis" in analysis_type:
+                            st.markdown("---")
+                            st.subheader("🎯 Probability of Profit Analysis")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                prob_color = "green" if combined_prob >= 0.7 else "orange" if combined_prob >= 0.5 else "red"
+                                st.markdown(f"**Combined PoP:** <span style='color: {prob_color}; font-size: 24px; font-weight: bold'>{combined_prob:.1%}</span>", unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.metric("Multi-Indicator PoP", f"{multi_indicator_prob:.1%}")
+                            
+                            with col3:
+                                st.metric("Statistical PoP", f"{stock_prob:.1%}")
+                            
+                            with col4:
+                                st.metric("Historical Volatility", f"{historical_vol:.1%}")
+                            
+                            # Probability breakdown
+                            st.markdown("### 📊 Probability Breakdown")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("**Multi-Indicator Analysis:**")
+                                active_signals = sum(1 for signal in ['MA_signal', 'MACD_signal', 'RSI_signal', 'BB_signal', 'STOCH_signal', 'SR_signal', 'pivot_signal', 'ADX_signal'] if tech_signals.get(signal, 0) != 0)
+                                st.write(f"- Active signals: {active_signals}/8")
+                                st.write(f"- Individual signal probability: ~35%")
+                                st.write(f"- Combined probability: {multi_indicator_prob:.1%}")
+                            
+                            with col2:
+                                st.markdown("**Statistical Analysis:**")
+                                st.write(f"- Current price: ${current_price:.2f}")
+                                st.write(f"- Target price: ${target_price:.2f}")
+                                st.write(f"- Stop loss: ${position_data['stop_loss_price']:.2f}")
+                                st.write(f"- Days to target: {days_to_target}")
+                                st.write(f"- Statistical PoP: {stock_prob:.1%}")
+                            
+                            # Risk-Reward Analysis
+                            st.markdown("### ⚖️ Risk-Reward Analysis")
+                            
+                            potential_profit = target_price - current_price
+                            potential_loss = current_price - position_data['stop_loss_price']
+                            actual_rr_ratio = potential_profit / potential_loss if potential_loss > 0 else 0
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Potential Profit", f"${potential_profit:.2f}")
+                            
+                            with col2:
+                                st.metric("Potential Loss", f"${potential_loss:.2f}")
+                            
+                            with col3:
+                                st.metric("Risk:Reward Ratio", f"1:{actual_rr_ratio:.1f}")
+                            
+                            # Expected Value Calculation
+                            expected_value = (combined_prob * potential_profit) - ((1 - combined_prob) * potential_loss)
+                            expected_value_per_share = expected_value
+                            total_expected_value = expected_value_per_share * position_data['shares']
+                            
+                            st.markdown("### 💡 Expected Value Analysis")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                ev_color = "green" if expected_value > 0 else "red"
+                                st.markdown(f"**Expected Value per Share:** <span style='color: {ev_color}'>${expected_value_per_share:.2f}</span>", unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.markdown(f"**Total Expected Value:** <span style='color: {ev_color}'>${total_expected_value:.2f}</span>", unsafe_allow_html=True)
+                            
+                            # Recommendation based on probability
+                            st.markdown("### 🎯 Probability-Based Recommendation")
+                            
+                            if combined_prob >= 0.75:
+                                rec_color = "green"
+                                recommendation = "🟢 **HIGH PROBABILITY TRADE** - Strong signals with favorable odds"
+                            elif combined_prob >= 0.60:
+                                rec_color = "lightgreen"
+                                recommendation = "🟢 **GOOD PROBABILITY TRADE** - Decent odds with manageable risk"
+                            elif combined_prob >= 0.45:
+                                rec_color = "orange"
+                                recommendation = "🟡 **MODERATE PROBABILITY TRADE** - Consider reducing position size"
+                            else:
+                                rec_color = "red"
+                                recommendation = "🔴 **LOW PROBABILITY TRADE** - High risk, consider avoiding"
+                            
+                            st.markdown(f"<div style='padding: 10px; border-left: 4px solid {rec_color}; background-color: rgba(128,128,128,0.1)'>{recommendation}</div>", unsafe_allow_html=True)
                     
                     # Fundamental Analysis
                     if "Fundamental Analysis" in analysis_type and analyzer.info:
@@ -1159,16 +1414,111 @@ def main():
                             st.write(f"**Industry:** {industry}")
                             st.write(f"**Employees:** {employees:,}" if isinstance(employees, (int, float)) else f"**Employees:** {employees}")
                     
-                    # News Sentiment
+                    # Real News Sentiment Analysis (Updated Section)
                     if "News Sentiment" in analysis_type:
-                        st.markdown("## 📰 News Sentiment Analysis")
+                        st.markdown("## 📰 Real News Sentiment Analysis")
                         
-                        news_items = get_news_sentiment(symbol)
+                        with st.spinner("Fetching real news data..."):
+                            news_items = get_real_news_sentiment(symbol)
                         
-                        for item in news_items:
-                            with st.expander(f"📰 {item['title']} - {item['date']}"):
-                                sentiment_color = "green" if item['sentiment'] == "Positive" else "red" if item['sentiment'] == "Negative" else "yellow"
-                                st.markdown(f"**Sentiment:** <span style='color: {sentiment_color}'>{item['sentiment']}</span>", unsafe_allow_html=True)
+                        if news_items:
+                            # Overall sentiment summary
+                            sentiment_counts = {}
+                            total_polarity = 0
+                            
+                            for item in news_items:
+                                sentiment = item['sentiment']
+                                sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+                                total_polarity += item['polarity_score']
+                            
+                            avg_polarity = total_polarity / len(news_items) if news_items else 0
+                            
+                            # Display sentiment summary
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                overall_sentiment = "Positive" if avg_polarity > 0.1 else "Negative" if avg_polarity < -0.1 else "Neutral"
+                                sentiment_color = "green" if overall_sentiment == "Positive" else "red" if overall_sentiment == "Negative" else "orange"
+                                st.markdown(f"**Overall Sentiment:** <span style='color: {sentiment_color}'>{overall_sentiment}</span>", unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.metric("Average Polarity", f"{avg_polarity:.3f}")
+                            
+                            with col3:
+                                st.metric("Total Articles", len(news_items))
+                            
+                            with col4:
+                                positive_pct = (sentiment_counts.get('Positive', 0) + sentiment_counts.get('Very Positive', 0)) / len(news_items) * 100
+                                st.metric("Positive %", f"{positive_pct:.1f}%")
+                            
+                            # Sentiment breakdown chart
+                            st.markdown("### 📊 Sentiment Distribution")
+                            
+                            sentiment_df = pd.DataFrame(list(sentiment_counts.items()), columns=['Sentiment', 'Count'])
+                            
+                            fig_sentiment = go.Figure(data=[
+                                go.Bar(
+                                    x=sentiment_df['Sentiment'],
+                                    y=sentiment_df['Count'],
+                                    marker_color=['darkgreen' if 'Positive' in s else 'darkred' if 'Negative' in s else 'gray' for s in sentiment_df['Sentiment']]
+                                )
+                            ])
+                            
+                            fig_sentiment.update_layout(
+                                title="News Sentiment Distribution",
+                                xaxis_title="Sentiment",
+                                yaxis_title="Number of Articles",
+                                template="plotly_dark"
+                            )
+                            
+                            st.plotly_chart(fig_sentiment, use_container_width=True)
+                            
+                            # Individual news items
+                            st.markdown("### 📰 Recent News Articles")
+                            
+                            for i, item in enumerate(news_items[:10]):  # Show top 10
+                                with st.expander(f"📰 {item['title'][:80]}{'...' if len(item['title']) > 80 else ''} - {item['date']}"):
+                                    col1, col2 = st.columns([3, 1])
+                                    
+                                    with col1:
+                                        st.write(f"**Full Title:** {item['title']}")
+                                        st.write(f"**Publisher:** {item['publisher']}")
+                                        st.write(f"**Date:** {item['date']}")
+                                        if item.get('url'):
+                                            st.write(f"**Link:** [Read Full Article]({item['url']})")
+                                    
+                                    with col2:
+                                        sentiment_color = "green" if "Positive" in item['sentiment'] else "red" if "Negative" in item['sentiment'] else "orange"
+                                        st.markdown(f"**Sentiment:** <span style='color: {sentiment_color}'>{item['sentiment']}</span>", unsafe_allow_html=True)
+                                        st.write(f"**Polarity:** {item['polarity_score']}")
+                                        st.write(f"**Subjectivity:** {item['subjectivity_score']}")
+                            
+                            # News sentiment impact on trading decision
+                            st.markdown("### 🎯 News Impact on Trading Decision")
+                            
+                            if avg_polarity > 0.2:
+                                news_impact = "🟢 **POSITIVE NEWS CATALYST** - Recent news strongly supports bullish sentiment"
+                                impact_color = "green"
+                            elif avg_polarity > 0.05:
+                                news_impact = "🟢 **MILDLY POSITIVE NEWS** - Recent news slightly supports bullish sentiment"
+                                impact_color = "lightgreen"
+                            elif avg_polarity < -0.2:
+                                news_impact = "🔴 **NEGATIVE NEWS CATALYST** - Recent news strongly supports bearish sentiment"
+                                impact_color = "red"
+                            elif avg_polarity < -0.05:
+                                news_impact = "🔴 **MILDLY NEGATIVE NEWS** - Recent news slightly supports bearish sentiment"
+                                impact_color = "lightcoral"
+                            else:
+                                news_impact = "🟡 **NEUTRAL NEWS** - Recent news shows mixed or neutral sentiment"
+                                impact_color = "orange"
+                            
+                            st.markdown(f"<div style='padding: 10px; border-left: 4px solid {impact_color}; background-color: rgba(128,128,128,0.1)'>{news_impact}</div>", unsafe_allow_html=True)
+                        
+                        else:
+                            st.warning(f"No recent news found for {symbol}. This could be due to:")
+                            st.write("- Limited news coverage for this stock")
+                            st.write("- API limitations or connectivity issues")
+                            st.write("- Stock symbol not recognized by news sources")
                 
                 else:
                     st.error("Failed to fetch stock data. Please check the symbol and try again.")
@@ -1178,6 +1528,8 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown("**Disclaimer:** This analysis is for educational purposes only and should not be considered as financial advice.")
+    st.markdown("**News Data:** Real-time news sentiment analysis powered by Yahoo Finance and TextBlob.")
 
 if __name__ == "__main__":
     main()
+
